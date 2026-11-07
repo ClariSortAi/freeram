@@ -22,7 +22,7 @@ Developer machines that run for days pile up per-session helpers (MCP servers, l
 ## Before you start
 
 - When the platform is not Windows, say freeram only runs on Windows and stop.
-- Run every command with the PowerShell tool. When there is no PowerShell tool, tell the user to add `"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"` under `"env"` in `~/.claude/settings.json`, restart Claude Code, and run `/freeram:sweep` again. Then stop.
+- Run every command with the PowerShell tool. When there is no PowerShell tool, tell the user it is on by default on Windows for claude.ai and Console accounts; on Amazon Bedrock, Google Cloud or Microsoft Foundry, or after it was turned off, set `"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"` under `"env"` in `~/.claude/settings.json`, restart Claude Code, and run `/freeram:sweep` again. Then stop.
 - `$PID` is a read-only PowerShell variable. Name loop variables `$procId`, never `$pid`.
 - PowerShell tool calls do not share variables. Step 1 saves a CSV; later steps read it back.
 - Tell the user in one line: each command asks for permission, the process snapshot is saved to `%TEMP%\freeram\`, and anything in a command line that looks like a token or password is masked before it reaches the conversation.
