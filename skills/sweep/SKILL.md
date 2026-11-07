@@ -141,7 +141,7 @@ $sf = Join-Path $HOME '.claude\freeram\settings.json'
 if (Test-Path $sf) { $cfg = Get-Content $sf -Raw | ConvertFrom-Json; $keep += @($cfg.keep); $kill = @($cfg.kill) }
 $keep = @($keep | Where-Object { $_ -and $_ -notin $kill })
 "autoKill: $(if ($cfg) { $cfg.autoKill } else { '(no settings file)' }); keep: $($keep.Count) names; kill: $($kill -join ', ')"
-$system = 'System', 'System Idle Process', 'Registry', 'Memory Compression', 'smss.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'lsass.exe', 'fontdrvhost.exe', 'dwm.exe', 'svchost.exe', 'explorer.exe', 'conhost.exe'
+$system = 'System', 'System Idle Process', 'Registry', 'Memory Compression', 'smss.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'lsass.exe', 'fontdrvhost.exe', 'dwm.exe', 'svchost.exe', 'explorer.exe', 'conhost.exe', 'OpenConsole.exe'
 $hostRx = '^(node|python|pythonw|bash|sh|cmd|powershell|pwsh|uv|uvx|deno|bun|git|jq|tail|grep|nohup|gcloud)\.exe$'
 $helperRx = '(?i)mcp|language-?server|tsserver|pylance|rust-analyzer|gopls|eslint_d|--headless|--remote-debugging-p(ort|ipe)|playwright|next dev|vite|webpack|\btsx\b'
 $rows | Where-Object {
@@ -212,13 +212,16 @@ $out = foreach ($procId in $targetPids) {
   if (-not $g) { [pscustomobject]@{ PID = $procId; Alive = $false } }
   else {
     $delta = if ($before.ContainsKey($procId)) { [math]::Round($g.CPU - $before[$procId], 3) } else { $null }
-    [pscustomobject]@{ PID = $procId; Name = $g.ProcessName; Alive = $true; DeltaCPU = $delta; Priv_MB = [math]::Round($g.PrivateMemorySize64 / 1MB, 1) }
+    $tcp = @(Get-NetTCPConnection -OwningProcess $procId -State Established -ErrorAction SilentlyContinue).Count  # none found is the normal case
+    [pscustomobject]@{ PID = $procId; Name = $g.ProcessName; Alive = $true; DeltaCPU = $delta; TCP = $tcp; Priv_MB = [math]::Round($g.PrivateMemorySize64 / 1MB, 1) }
   }
 }
 $out | Sort-Object DeltaCPU -Descending | Format-Table -AutoSize | Out-String
 ```
 
-- When DeltaCPU is about 0, the process is idle and can be killed, with three exceptions:
+- When DeltaCPU is about 0, the process is idle and can be killed, with these exceptions:
+  - `TCP` above 0: it holds established connections, so something is talking to it, even at zero CPU (for example an orphaned backend that per-session helpers connect to). Treat it as in use unless the user's `kill` list names it.
+  - Its chain runs through a live `claude.exe` and a shell (`bash.exe`, `cmd.exe`, `pwsh.exe`) running a command rather than an MCP server: it is a tool call of that session, possibly waiting on I/O. Ask; never kill it without asking.
   - An interactive shell (`powershell.exe`, `cmd.exe`, `bash.exe` with no script argument) whose chain ends at a live terminal host such as `WindowsTerminal.exe` is an open tab. Kill it only when its chain is broken or the terminal is gone.
   - A helper created less than `minAgeMinutes` ago (default 30) may be between tool calls in an active session. Ask instead of killing, unless the user's `kill` list names it.
   - A persistent service someone would expect to stay up (see "Ask instead of killing" in step 2).
@@ -227,7 +230,7 @@ $out | Sort-Object DeltaCPU -Descending | Format-Table -AutoSize | Out-String
 
 ## Step 5: kill
 
-- Every PID must have read DeltaCPU about 0 in step 4 (or be a confirmed runaway), and duplicates must be confirmed as the same singleton. Then follow `autoKill` from the settings:
+- Every PID must have read DeltaCPU about 0 in step 4 (or be a confirmed runaway), must not fall under a step 4 exception, and, for duplicates, must be confirmed as the same singleton. Then follow `autoKill` from the settings:
   - `helpers`: kill without asking the script hosts and helpers (a `$hostRx` name from step 2, or an automation-only browser) that are not keep-listed, have no window title, and are older than `minAgeMinutes`.
   - `idle`: kill without asking any process that is not keep-listed, has no window title, and is older than `minAgeMinutes`, except the "Ask instead of killing" cases in step 2.
   - `none`: kill nothing without asking.
