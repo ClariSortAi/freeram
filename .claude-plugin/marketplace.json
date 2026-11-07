@@ -1,0 +1,16 @@
+{
+  "name": "freeram",
+  "owner": {
+    "name": "Jason Rivard"
+  },
+  "metadata": {
+    "description": "freeram: reclaim memory from abandoned processes on Windows."
+  },
+  "plugins": [
+    {
+      "name": "freeram",
+      "source": "./",
+      "description": "Find and kill abandoned Windows processes after proving they are idle, and check DWM for a memory leak."
+    }
+  ]
+}

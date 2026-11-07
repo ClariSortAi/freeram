@@ -1,0 +1,15 @@
+{
+  "name": "freeram",
+  "version": "1.0.0",
+  "description": "Windows only. Find abandoned processes (leaked MCP servers, respawned duplicate helpers, hung CLI calls, stuck script trees), prove each one is idle with a live CPU sample, kill only those, and check Desktop Window Manager for a memory leak.",
+  "author": {
+    "name": "Jason Rivard"
+  },
+  "homepage": "https://github.com/ClariSortAi/freeram",
+  "repository": "https://github.com/ClariSortAi/freeram",
+  "documentationUrl": "https://github.com/ClariSortAi/freeram#readme",
+  "supportUrl": "https://github.com/ClariSortAi/freeram/issues",
+  "privacyPolicyUrl": "https://github.com/ClariSortAi/freeram#data-and-privacy",
+  "license": "MIT",
+  "keywords": ["windows", "memory", "ram", "processes", "mcp", "cleanup", "dwm"]
+}
