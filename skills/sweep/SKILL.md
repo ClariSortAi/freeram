@@ -1,7 +1,7 @@
 ---
 name: sweep
-description: Find abandoned Windows processes (leaked MCP servers, respawned duplicate helpers, hung CLI calls, stuck script trees), prove each one is idle with a live CPU sample, and kill only those. Also checks Desktop Window Manager for a memory leak. Windows only. Arguments - --dry-run.
-argument-hint: "[--dry-run]"
+description: Find abandoned Windows processes (leaked MCP servers, respawned duplicate helpers, hung CLI calls, stuck script trees), prove each one is idle with a live CPU sample, and kill only those. Also checks Desktop Window Manager for a memory leak. Each user sets how much it may kill without asking. Windows only. Arguments - --dry-run, settings.
+argument-hint: "[--dry-run] [settings]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep
 ---
@@ -13,11 +13,14 @@ Developer machines that run for days pile up per-session helpers (MCP servers, l
 ## Rules
 
 - Never infer "not in use" from age or process name. Sample CPU live (step 4) before every kill.
-- Never kill a keep-list process itself. Its orphaned or duplicate helper children are fair game.
-- Never kill a process that has a window title without asking first.
+- Follow the user's settings (see Setup) for what to kill without asking. Settings change only what gets asked; the step 4 CPU check always applies.
+- Never kill a keep-list process itself unless the user's `kill` list names it. Its orphaned or duplicate helper children are fair game.
+- Never kill a process that has a window title without asking first, unless the user's `kill` list names it.
+- Never kill Windows system processes (step 2's `$system` list) or this session's own `claude.exe` and its ancestors, whatever the settings say.
 - Kill single PIDs with `Stop-Process -Id`. Never use `taskkill /T` and never kill by name, except the Explorer restart under "Known patterns", which needs a yes first.
 - Never kill a PID you have not CPU-sampled in this run.
 - When the arguments include `--dry-run`: run steps 1 to 4 and the DWM check, list what would be killed, kill nothing, launch no UAC prompt, and title the report "dry run, nothing killed".
+- When the arguments include `settings`: run Setup, show the saved file, and stop.
 
 ## Before you start
 
@@ -26,9 +29,35 @@ Developer machines that run for days pile up per-session helpers (MCP servers, l
 - `$PID` is a read-only PowerShell variable. Name loop variables `$procId`, never `$pid`.
 - PowerShell tool calls do not share variables. Step 1 saves a CSV; later steps read it back.
 - Tell the user in one line: each command asks for permission, the process snapshot is saved to `%TEMP%\freeram\`, and anything in a command line that looks like a token or password is masked before it reaches the conversation.
-- Read `~/.claude/freeram/keep-list.txt` when it exists (one process name per line) and add those names to the keep-list.
+- Read `~/.claude/freeram/settings.json`. When it does not exist, run Setup before step 1.
+
+## Setup
+
+Run on the first run (no settings file) or when the arguments include `settings`.
+
+- Ask one AskUserQuestion, `multiSelect: false`, header `Auto-kill`, question `How much may freeram kill without asking? Every process is CPU-checked first, and keep-listed apps are never touched.` Options:
+  - `Idle helpers only (Recommended)`: `Idle script hosts and leftover helpers (node, python, shells, MCP and language servers, headless browsers). Asks about anything else.`
+  - `Any idle process`: `Any idle process with no window that is not on the keep-list. Asks only about windowed apps, recent helpers and services people expect to stay up.`
+  - `Ask every time`: `Lists everything it finds and kills only what you pick.`
+- Write `~/.claude/freeram/settings.json` with the Write tool. Keep any existing `minAgeMinutes`, `keep` and `kill` values; set `autoKill` to `helpers`, `idle` or `none` from the answer.
+
+```json
+{
+  "autoKill": "helpers",
+  "minAgeMinutes": 30,
+  "keep": [],
+  "kill": []
+}
+```
+
+- `minAgeMinutes`: helpers younger than this are asked about in every mode, because they may be between tool calls in a live session.
+- `keep`: process names never killed, on top of the built-in keep-list.
+- `kill`: process names that may be killed without asking whenever they read idle, even with a window title or on the built-in keep-list.
+- Tell the user the file path, and that they can edit it by hand or run `/freeram:sweep settings` to change it.
 
 ## Keep-list
+
+Names in the user's `keep` list join this list. Names in the user's `kill` list leave it.
 
 - `claude.exe`, `Claude.exe`: every Claude Code CLI session and the Claude desktop app. Killing one ends a live session.
 - `codex.exe`, `ChatGPT.exe`
@@ -37,7 +66,7 @@ Developer machines that run for days pile up per-session helpers (MCP servers, l
 - Editors: `Code.exe`, `Cursor.exe`, `Windsurf.exe`
 - `WindowsTerminal.exe`, `explorer.exe`, `Docker Desktop.exe`
 - Windows system processes and vendor services rooted at `services.exe`. Report large ones, never kill them.
-- When an unfamiliar top-level app shows up with a window title or more than 500 MB private, ask whether to keep it. When the user says keep it, append its name to `~/.claude/freeram/keep-list.txt` with the Write or Edit tool.
+- When an unfamiliar top-level app shows up with a window title or more than 500 MB private, ask whether to keep it. When the user says keep it, add its name to `keep` in `~/.claude/freeram/settings.json` with the Edit tool. When the user says it can always go, add it to `kill`.
 
 ## Step 1: snapshot every process
 
@@ -86,6 +115,9 @@ $rows = foreach ($p in $wmi) {
   }
 }
 $rows | Export-Csv -Path (Join-Path $dir 'snapshot.csv') -NoTypeInformation -Encoding UTF8
+$me = @(); $cur = [string]$PID
+while ($byId.ContainsKey($cur) -and $me.Count -lt 25) { $me += "$($byId[$cur].Name) $cur"; $nxt = [string]$byId[$cur].ParentProcessId; if ($nxt -eq $cur) { break }; $cur = $nxt }
+"This session (never kill): " + ($me -join ' < ')
 
 $os = Get-CimInstance Win32_OperatingSystem
 "RAM used: {0:N1} GB of {1:N1} GB" -f (($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB), ($os.TotalVisibleMemorySize / 1MB)
@@ -104,33 +136,38 @@ $rows | Group-Object Name | ForEach-Object {
 ```powershell
 $rows = Import-Csv (Join-Path $env:TEMP 'freeram\snapshot.csv')
 $keep = 'claude.exe', 'codex.exe', 'ChatGPT.exe', 'chrome.exe', 'msedge.exe', 'msedgewebview2.exe', 'firefox.exe', 'brave.exe', 'Slack.exe', 'ms-teams.exe', 'Teams.exe', 'Discord.exe', 'Code.exe', 'Cursor.exe', 'Windsurf.exe', 'WindowsTerminal.exe', 'Docker Desktop.exe'
-$kf = Join-Path $HOME '.claude\freeram\keep-list.txt'
-if (Test-Path $kf) { $keep += Get-Content $kf | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
+$kill = @()
+$sf = Join-Path $HOME '.claude\freeram\settings.json'
+if (Test-Path $sf) { $cfg = Get-Content $sf -Raw | ConvertFrom-Json; $keep += @($cfg.keep); $kill = @($cfg.kill) }
+$keep = @($keep | Where-Object { $_ -and $_ -notin $kill })
+"autoKill: $(if ($cfg) { $cfg.autoKill } else { '(no settings file)' }); keep: $($keep.Count) names; kill: $($kill -join ', ')"
 $system = 'System', 'System Idle Process', 'Registry', 'Memory Compression', 'smss.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'lsass.exe', 'fontdrvhost.exe', 'dwm.exe', 'svchost.exe', 'explorer.exe', 'conhost.exe'
 $hostRx = '^(node|python|pythonw|bash|sh|cmd|powershell|pwsh|uv|uvx|deno|bun|git|jq|tail|grep|nohup|gcloud)\.exe$'
 $helperRx = '(?i)mcp|language-?server|tsserver|pylance|rust-analyzer|gopls|eslint_d|--headless|--remote-debugging-p(ort|ipe)|playwright|next dev|vite|webpack|\btsx\b'
 $rows | Where-Object {
-    $_.Name -notin $system -and -not $_.Title -and $_.Cmd -notmatch '--type=' -and
+    $_.Name -notin $system -and ($_.Name -in $kill -or (
+    -not $_.Title -and $_.Cmd -notmatch '--type=' -and
     ($_.Name -notin $keep -or $_.Cmd -match '--headless|--remote-debugging-p(ort|ipe)') -and
-    ($_.Name -match $hostRx -or $_.Orphan -eq 'True' -or $_.Cmd -match $helperRx)
+    ($_.Name -match $hostRx -or $_.Orphan -eq 'True' -or $_.Cmd -match $helperRx)))
   } |
   Sort-Object { [double]$_.Priv_MB } -Descending | Select-Object -First 80 |
   Select-Object PID, PPID, Name, Created, Priv_MB, Orphan, Chain, @{ n = 'Cmd'; e = { if ($_.Cmd.Length -gt 160) { $_.Cmd.Substring(0, 160) } else { $_.Cmd } } } |
   Format-Table -AutoSize -Wrap | Out-String -Width 400
 ```
 
-The list leaves out keep-list apps (except automation-only browsers), anything with a window title, and browser or Electron `--type=` children. Treat a row as a candidate when any of these hold:
+The list leaves out system processes, keep-list apps (except automation-only browsers), anything with a window title, and browser or Electron `--type=` children. Names in the user's `kill` list are always listed. Treat a row as a candidate when any of these hold:
 
-- `Orphan` is True: the parent chain dead-ends, or the parent PID was reused by a newer process. Many desktop apps and vendor services (sync clients, updaters, tray tools) also show a dead launcher; those are apps, not leaks. Report a large one, never kill it unasked.
+- Its name is in the user's `kill` list.
+- `Orphan` is True: the parent chain dead-ends, or the parent PID was reused by a newer process. Many desktop apps and vendor services (sync clients, updaters, tray tools) also show a dead launcher; those are apps, not leaks. Report a large one, and ask before killing it unless `autoKill` is `idle`.
 - The command line is a per-session helper: `npx ... mcp`, `*-mcp`, `mcp-remote`, `mcp-proxy`, `uvx ...`, `server.mjs`, and similar. A live parent does not clear it: the leak is a parent that forgot a finished child.
 - It is an IDE language server or debug adapter (`tsserver.js`, `pylance`, `rust-analyzer`, `gopls`, `eslint_d`, `copilot-language-server`, `vscode-*-server`) left under a live `Code.exe` or `Cursor.exe` after its workspace closed.
 - It is an automation-only browser child (`--headless`, `--remote-debugging-port`, no window title) that nothing drives any more. The browser keep-list protects the user's own browser windows, not these.
 - It is a one-off script call (`npx tsx some-script.ts`) that has sat for hours.
 - It is a hung `git diff --quiet ...` or `git ls-files --others ...` call, or a statusline `jq.exe` call, with a dead parent.
 
-Ask instead of killing, even at zero CPU:
+Ask instead of killing, even at zero CPU and in every `autoKill` mode, unless the user's `kill` list names the process:
 
-- Dev servers (`next dev`, `vite`, `webpack serve`), databases, build watchers, language servers for an open workspace.
+- Dev servers (`next dev`, `vite`, `webpack serve`), databases, build watchers, language servers for an open workspace, sync clients and updaters.
 - Local model servers such as `ollama serve`. Run `ollama ps` first; an empty list means no model is loaded.
 - `tail -f <log> | grep --line-buffered ...` pairs left by finished sessions. They poll, so they never read as fully idle.
 - An unfamiliar desktop app with no window title and a dead parent.
@@ -183,15 +220,19 @@ $out | Sort-Object DeltaCPU -Descending | Format-Table -AutoSize | Out-String
 
 - When DeltaCPU is about 0, the process is idle and can be killed, with three exceptions:
   - An interactive shell (`powershell.exe`, `cmd.exe`, `bash.exe` with no script argument) whose chain ends at a live terminal host such as `WindowsTerminal.exe` is an open tab. Kill it only when its chain is broken or the terminal is gone.
-  - A helper created in the last 30 minutes may be between tool calls in an active session. Ask instead of killing.
+  - A helper created less than `minAgeMinutes` ago (default 30) may be between tool calls in an active session. Ask instead of killing, unless the user's `kill` list names it.
   - A persistent service someone would expect to stay up (see "Ask instead of killing" in step 2).
 - When DeltaCPU is above 0, something is using it. Do not kill; list it as in use.
 - When DeltaCPU is above 0, the parent is dead, and private memory is large or growing against the step 1 snapshot, it is a runaway (for example a CLI call that should take seconds but has burned a core for hours). Kill it and its orphaned shell parent unless it is on the keep-list.
 
 ## Step 5: kill
 
-- Kill without asking only when every PID on the list is a script host or helper (a `$hostRx` name from step 2, or an automation-only browser), is not keep-listed, has no window title, read DeltaCPU about 0, is older than 30 minutes, and, for duplicates, is confirmed to be the same singleton.
-- List everything else separately and ask with AskUserQuestion before touching it.
+- Every PID must have read DeltaCPU about 0 in step 4 (or be a confirmed runaway), and duplicates must be confirmed as the same singleton. Then follow `autoKill` from the settings:
+  - `helpers`: kill without asking the script hosts and helpers (a `$hostRx` name from step 2, or an automation-only browser) that are not keep-listed, have no window title, and are older than `minAgeMinutes`.
+  - `idle`: kill without asking any process that is not keep-listed, has no window title, and is older than `minAgeMinutes`, except the "Ask instead of killing" cases in step 2.
+  - `none`: kill nothing without asking.
+  - In every mode, a process named in the user's `kill` list is killed without asking once it reads idle.
+- Ask about everything else with AskUserQuestion: `multiSelect: true`, one option per group by cause, with the count and private MB in the description, at most 4 options per question. Kill only what the user picks.
 - When killing a tree, kill children before parents. Skip a child created before its parent (PID reuse) and any keep-list name.
 
 ```powershell
@@ -290,6 +331,7 @@ $os = Get-CimInstance Win32_OperatingSystem
 
 - Group what was killed by cause (runaway, stuck script, leaked MCP server, duplicate respawn, hung git call), with private MB per group. No raw PID dump.
 - List what was left alone and why: keep-list, window title, nonzero CPU, or waiting on the user's answer.
+- Name the `autoKill` mode used, and say `/freeram:sweep settings` changes it.
 - Show RAM used and commit before and after, and DWM private MB before and after when it was restarted.
 - When a killed process was an MCP server, say that its tools reconnect on next use.
 - On `--dry-run`, title the report "dry run, nothing killed" and show the planned kills with their private MB.
