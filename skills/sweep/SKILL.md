@@ -17,6 +17,7 @@ Developer machines that run for days pile up per-session helpers (MCP servers, l
 - Never kill a keep-list process itself unless the user's `kill` list names it. Its orphaned or duplicate helper children are fair game.
 - Never kill a process that has a window title without asking first, unless the user's `kill` list names it.
 - Never kill Windows system processes (step 2's `$system` list) or this session's own `claude.exe` and its ancestors, whatever the settings say.
+- Never kill a command another open Claude session is still running (`ToolCall` True in step 4) without asking, whatever the settings say.
 - Kill single PIDs with `Stop-Process -Id`. Never use `taskkill /T` and never kill by name, except the Explorer restart under "Known patterns", which needs a yes first.
 - Never kill a PID you have not CPU-sampled in this run.
 - When the arguments include `--dry-run`: run steps 1 to 4 and the DWM check, list what would be killed, kill nothing, launch no UAC prompt, and title the report "dry run, nothing killed".
@@ -204,6 +205,7 @@ $dupes | ForEach-Object {
 
 ```powershell
 $targetPids = 1111, 2222, 3333  # candidates from steps 2 and 3
+$snap = @{}; Import-Csv (Join-Path $env:TEMP 'freeram\snapshot.csv') | ForEach-Object { $snap[$_.PID] = $_ }
 $before = @{}
 foreach ($procId in $targetPids) { $g = Get-Process -Id $procId -ErrorAction SilentlyContinue; if ($g) { $before[$procId] = $g.CPU } }
 Start-Sleep -Seconds 8
@@ -213,7 +215,9 @@ $out = foreach ($procId in $targetPids) {
   else {
     $delta = if ($before.ContainsKey($procId)) { [math]::Round($g.CPU - $before[$procId], 3) } else { $null }
     $tcp = @(Get-NetTCPConnection -OwningProcess $procId -State Established -ErrorAction SilentlyContinue).Count  # none found is the normal case
-    [pscustomobject]@{ PID = $procId; Name = $g.ProcessName; Alive = $true; DeltaCPU = $delta; TCP = $tcp; Priv_MB = [math]::Round($g.PrivateMemorySize64 / 1MB, 1) }
+    $r = $snap[[string]$procId]
+    $toolCall = [bool]($r -and $r.Chain -match '(bash|sh|cmd|pwsh|powershell)\.exe < (.+ < )?claude\.exe' -and $r.Cmd -notmatch '(?i)mcp')
+    [pscustomobject]@{ PID = $procId; Name = $g.ProcessName; Alive = $true; DeltaCPU = $delta; TCP = $tcp; ToolCall = $toolCall; Priv_MB = [math]::Round($g.PrivateMemorySize64 / 1MB, 1) }
   }
 }
 $out | Sort-Object DeltaCPU -Descending | Format-Table -AutoSize | Out-String
@@ -221,7 +225,7 @@ $out | Sort-Object DeltaCPU -Descending | Format-Table -AutoSize | Out-String
 
 - When DeltaCPU is about 0, the process is idle and can be killed, with these exceptions:
   - `TCP` above 0: it holds established connections, so something is talking to it, even at zero CPU (for example an orphaned backend that per-session helpers connect to). Treat it as in use unless the user's `kill` list names it.
-  - Its chain runs through a live `claude.exe` and a shell (`bash.exe`, `cmd.exe`, `pwsh.exe`) running a command rather than an MCP server: it is a tool call of that session, possibly waiting on I/O. Ask; never kill it without asking.
+  - `ToolCall` True: its chain runs through a shell into a live `claude.exe` and it is not an MCP server, so it is a command another open Claude session is still running, possibly waiting on a download, a scan or a watch. Ask in every mode, even when the user's `kill` list names it; never kill it without asking.
   - An interactive shell (`powershell.exe`, `cmd.exe`, `bash.exe` with no script argument) whose chain ends at a live terminal host such as `WindowsTerminal.exe` is an open tab. Kill it only when its chain is broken or the terminal is gone.
   - A helper created less than `minAgeMinutes` ago (default 30) may be between tool calls in an active session. Ask instead of killing, unless the user's `kill` list names it.
   - A persistent service someone would expect to stay up (see "Ask instead of killing" in step 2).
@@ -234,7 +238,7 @@ $out | Sort-Object DeltaCPU -Descending | Format-Table -AutoSize | Out-String
   - `helpers`: kill without asking the script hosts and helpers (a `$hostRx` name from step 2, or an automation-only browser) that are not keep-listed, have no window title, and are older than `minAgeMinutes`.
   - `idle`: kill without asking any process that is not keep-listed, has no window title, and is older than `minAgeMinutes`, except the "Ask instead of killing" cases in step 2.
   - `none`: kill nothing without asking.
-  - In every mode, a process named in the user's `kill` list is killed without asking once it reads idle.
+  - In every mode, a process named in the user's `kill` list is killed without asking once it reads idle, unless `ToolCall` is True.
 - Ask about everything else with AskUserQuestion: `multiSelect: true`, one option per group by cause, with the count and private MB in the description, at most 4 options per question. Kill only what the user picks.
 - When killing a tree, kill children before parents. Skip a child created before its parent (PID reuse) and any keep-list name.
 
