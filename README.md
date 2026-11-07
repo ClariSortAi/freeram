@@ -15,7 +15,7 @@ In Claude Code:
 
 Then run `/reload-plugins` or restart Claude Code.
 
-Requirements: Windows and Claude Code with its PowerShell tool. If that tool is off, add `"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"` under `"env"` in `~/.claude/settings.json` and restart Claude Code.
+Requirements: Windows and Claude Code's PowerShell tool. The tool is on by default on Windows for claude.ai and Console accounts. On Amazon Bedrock, Google Cloud or Microsoft Foundry, or if you turned it off, add `"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"` under `"env"` in `~/.claude/settings.json` and restart Claude Code.
 
 The plugin costs nothing until you run it. Its skill is user-invoked only, so its description never enters the context.
 
