@@ -1,7 +1,7 @@
 {
   "name": "freeram",
   "version": "1.0.0",
-  "description": "Windows only. Find abandoned processes (leaked MCP servers, respawned duplicate helpers, hung CLI calls, stuck script trees), prove each one is idle with a live CPU sample, kill only those, and check Desktop Window Manager for a memory leak.",
+  "description": "Windows only. Find abandoned processes (leaked MCP servers, respawned duplicate helpers, hung CLI calls, stuck script trees), prove each one is idle with a live CPU sample, kill what your own settings allow and ask about the rest, and check Desktop Window Manager for a memory leak.",
   "author": {
     "name": "Jason Rivard"
   },
