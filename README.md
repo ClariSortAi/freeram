@@ -45,7 +45,7 @@ The first time you run it, freeram asks how much it may kill without asking you,
 - `autoKill` is `helpers` (idle script hosts and leftover helpers such as MCP servers, language servers and headless browsers), `idle` (any idle process without a window that isn't on the keep-list), or `none` (ask before every kill).
 - `minAgeMinutes` is how old a helper has to be before it can go without a question. Younger ones may be between tool calls in a live session.
 - `keep` lists process names that are never killed, on top of the built-in keep-list.
-- `kill` lists process names that can go without a question whenever they are idle, even if they have a window or are on the built-in keep-list.
+- `kill` lists process names that can go without a question whenever they are idle, even if they have a window or are on the built-in keep-list. The one exception is a command another Claude session is still running: freeram always asks about those.
 
 Edit the file by hand, or run `/freeram:sweep settings` to answer the question again. Whatever you choose, every process gets the CPU check first, and freeram never kills Windows system processes or the Claude Code session it is running in.
 
@@ -67,10 +67,12 @@ By default, and unless your `kill` list says otherwise:
 - Anything with a window title, unless you say yes.
 - Dev servers, databases, build watchers, local model servers, sync clients and updaters. freeram asks about these even when they are idle.
 - Helpers younger than `minAgeMinutes`. They may be between tool calls in a live session, so freeram asks.
+- Processes with open network connections. Something is talking to them even when they use no CPU.
 
 Always, whatever your settings:
 
 - Windows system processes, and the Claude Code session freeram is running in.
+- Commands that another open Claude session is still running, such as a download or a long scan. freeram asks first, even when your `kill` list names the process.
 - Any process that used CPU during the sample. The exception is a runaway: its parent is gone and it keeps burning CPU and memory.
 
 When freeram finds an unfamiliar app holding a lot of memory, it asks about it. If you say keep it, the name goes into `keep` in your settings file. If you say it can always go, the name goes into `kill`.
